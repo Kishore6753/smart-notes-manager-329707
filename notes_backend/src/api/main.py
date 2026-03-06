@@ -30,7 +30,12 @@ from .models import (
     NoteOut,
     NotesListOut,
     NoteUpdate,
+    NoteVersionRestoreOut,
+    NoteVersionSaveIn,
+    NoteVersionSummaryOut,
+    NoteVersionsListOut,
 )
+from .version_flows import NoteVersionsFlow
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("notes_backend")
@@ -41,6 +46,7 @@ openapi_tags = [
     {"name": "Search", "description": "Search notes by content/title, with optional filters."},
     {"name": "Tags", "description": "List tags and their usage."},
     {"name": "Favorites", "description": "Pin/favorite notes for quick access."},
+    {"name": "Versioning", "description": "Manual per-note version history (save/list/restore)."},
 ]
 
 app = FastAPI(
@@ -63,6 +69,12 @@ def _flow() -> NotesFlow:
     """Create a NotesFlow with a fresh DB connection (simple, safe for SQLite)."""
     conn = connect()
     return NotesFlow(conn)
+
+
+def _versions_flow() -> NoteVersionsFlow:
+    """Create a NoteVersionsFlow with a fresh DB connection (simple, safe for SQLite)."""
+    conn = connect()
+    return NoteVersionsFlow(conn)
 
 
 @app.get("/", tags=["Health"], summary="Health check", operation_id="health_check")
@@ -204,3 +216,64 @@ def set_favorite(note_id: int, payload: FavoriteToggleIn):
     if not updated:
         raise HTTPException(status_code=404, detail="Note not found")
     return {"id": updated["id"], "is_favorite": updated["is_favorite"]}
+
+
+@app.post(
+    "/notes/{note_id}/versions",
+    tags=["Versioning"],
+    response_model=NoteVersionSummaryOut,
+    summary="Save a manual version snapshot for a note",
+    operation_id="save_note_version",
+)
+def save_note_version(note_id: int, payload: NoteVersionSaveIn):
+    """Save a manual version snapshot.
+
+    This does NOT change the current note; it snapshots current SQLite state into a
+    per-note JSON file on disk.
+    """
+    flow = _versions_flow()
+    created = flow.save_version(note_id=note_id, message=payload.message or "")
+    if not created:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return created
+
+
+@app.get(
+    "/notes/{note_id}/versions",
+    tags=["Versioning"],
+    response_model=NoteVersionsListOut,
+    summary="List saved versions for a note (newest first)",
+    operation_id="list_note_versions",
+)
+def list_note_versions(note_id: int):
+    """List saved manual versions for a note.
+
+    Versions are stored as a per-note JSON file on disk.
+    """
+    flow = _versions_flow()
+    items = flow.list_versions(note_id=note_id)
+    if items is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"items": items}
+
+
+@app.post(
+    "/notes/{note_id}/versions/{version_id}/restore",
+    tags=["Versioning"],
+    response_model=NoteVersionRestoreOut,
+    summary="Restore a note to a previous version snapshot",
+    operation_id="restore_note_version",
+)
+def restore_note_version(note_id: int, version_id: str):
+    """Restore the note fields from a saved snapshot.
+
+    Side effects:
+    - Updates the note in SQLite (title/content/tags/is_favorite)
+    - Appends a new version entry stating it was restored from the given version_id
+    """
+    flow = _versions_flow()
+    restored = flow.restore_version(note_id=note_id, version_id=version_id)
+    if restored is None:
+        # Could be note not found or version not found; keep simple.
+        raise HTTPException(status_code=404, detail="Note or version not found")
+    return {"note": restored}
