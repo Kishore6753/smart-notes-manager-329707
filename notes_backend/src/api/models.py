@@ -78,3 +78,34 @@ class FavoriteToggleOut(BaseModel):
 
     id: int = Field(..., description="Note id.")
     is_favorite: bool = Field(..., description="New favorite state.")
+
+
+class NoteVersionSaveIn(BaseModel):
+    """Request payload to manually save a note version snapshot."""
+
+    message: Optional[str] = Field(
+        None,
+        max_length=200,
+        description="Optional message describing why this version was saved.",
+    )
+
+
+class NoteVersionSummaryOut(BaseModel):
+    """A lightweight version entry for listing and selection."""
+
+    note_id: int = Field(..., description="Note id this version belongs to.")
+    version_id: str = Field(..., description="Version identifier.")
+    created_at: str = Field(..., description="When the version was created (ISO8601 UTC).")
+    message: str = Field("", description="Optional message for the version.")
+
+
+class NoteVersionsListOut(BaseModel):
+    """List response for note versions."""
+
+    items: List[NoteVersionSummaryOut] = Field(..., description="Versions for the note (newest first).")
+
+
+class NoteVersionRestoreOut(BaseModel):
+    """Response after restoring a version (returns the updated note)."""
+
+    note: NoteOut = Field(..., description="Note after applying the restored snapshot.")
